@@ -19,6 +19,7 @@ import net.minecraft.network.chat.*;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.entity.player.Player;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.UsernameCache;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
@@ -119,6 +120,7 @@ public class TPCommand {
         team.transferOwner(newOwnerUUID);
         newOwner.sendSystemMessage(Component.translatable("commands.teamprojecte.transfer_ownership.new_owner").withStyle(ChatFormatting.GREEN));
         context.getSource().sendSuccess(() -> Component.translatable("commands.teamprojecte.transfer_ownership.success", newOwner.getName()), true);
+        postTeamAttributeChangeEvent(team);
 
         return Command.SINGLE_SUCCESS;
     }
@@ -135,6 +137,8 @@ public class TPCommand {
         kick.forEach(p -> {
             team.removeMember(TeamProjectE.getPlayerUUID(p));
             p.sendSystemMessage(Component.translatable("commands.teamprojecte.kicked").withStyle(ChatFormatting.RED));
+            UUID uuid = TeamProjectE.getPlayerUUID(p);
+            postTeamMemberChangeEvent(uuid, team, null);
         });
 
         if (!kick.isEmpty())
@@ -186,7 +190,10 @@ public class TPCommand {
         TPTeam team = checkInTeam(player);
         if (team == null)
             return 0;
-        team.removeMember(TeamProjectE.getPlayerUUID(player));
+
+        UUID uuid = TeamProjectE.getPlayerUUID(player);
+        team.removeMember(uuid);
+        postTeamMemberChangeEvent(uuid, team, null);
         return Command.SINGLE_SUCCESS;
     }
 
@@ -214,6 +221,7 @@ public class TPCommand {
         context.getSource().sendSuccess(() -> Component.translatable("commands.teamprojecte.invite.accepted").withStyle(ChatFormatting.GREEN), false);
         Component component = Component.translatable("commands.teamprojecte.joined_team", player.getDisplayName()).withStyle(ChatFormatting.GREEN);
         TeamProjectE.getAllOnline(team.getAll()).forEach(p -> p.sendSystemMessage(component));
+        postTeamMemberChangeEvent(uuid, originalTeam, team);
 
         return Command.SINGLE_SUCCESS;
     }
@@ -320,6 +328,7 @@ public class TPCommand {
 
         team.setShareEMC(BoolArgumentType.getBool(context, "value"));
         context.getSource().sendSuccess(() -> Component.translatable("commands.teamprojecte.settings.set.sharing_emc." + team.isSharingEMC()), true);
+        postTeamAttributeChangeEvent(team);
 
         return Command.SINGLE_SUCCESS;
     }
@@ -343,8 +352,16 @@ public class TPCommand {
 
         team.setShareKnowledge(BoolArgumentType.getBool(context, "value"));
         context.getSource().sendSuccess(() -> Component.translatable("commands.teamprojecte.settings.set.sharing_knowledge." + team.isSharingKnowledge()), true);
+        postTeamAttributeChangeEvent(team);
 
         return Command.SINGLE_SUCCESS;
     }
 
+    private static void postTeamMemberChangeEvent(UUID playerUUID, TPTeam oldTeam, TPTeam newTeam) {
+        MinecraftForge.EVENT_BUS.post(new TeamChangeEvent(playerUUID, oldTeam, newTeam));
+    }
+
+    private static void postTeamAttributeChangeEvent(TPTeam team) {
+        postTeamMemberChangeEvent(null, team, null);
+    }
 }
