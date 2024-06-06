@@ -9,6 +9,7 @@ import moze_intel.projecte.emc.EMCMappingHandler;
 import moze_intel.projecte.emc.nbt.NBTManager;
 import moze_intel.projecte.gameObjs.items.Tome;
 import moze_intel.projecte.network.PacketHandler;
+import moze_intel.projecte.network.packets.IPEPacket;
 import moze_intel.projecte.network.packets.to_client.knowledge.KnowledgeSyncChangePKT;
 import moze_intel.projecte.network.packets.to_client.knowledge.KnowledgeSyncEmcPKT;
 import moze_intel.projecte.network.packets.to_client.knowledge.KnowledgeSyncInputsAndLocksPKT;
@@ -20,7 +21,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.items.IItemHandlerModifiable;
 import net.minecraftforge.items.ItemStackHandler;
-import net.minecraftforge.server.ServerLifecycleHooks;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,7 +62,6 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
         getTeam().setFullKnowledge(fullKnowledge, playerUUID.get());
         if (changed) {
             fireChangedEvent();
-            //sync(playerUUID);
         }
     }
 
@@ -74,7 +73,6 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
         if (hasKnowledge) {
             //If we previously had any knowledge fire the fact that our knowledge changed
             fireChangedEvent();
-            //sync(playerUUID);
         }
     }
 
@@ -128,7 +126,6 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
             getTeam().addKnowledge(info, playerUUID.get());
             getTeam().setFullKnowledge(true, playerUUID.get());
             fireChangedEvent();
-            sync(playerUUID.get());
             return true;
         }
         return tryAdd(NBTManager.getPersistentInfo(info));
@@ -137,7 +134,6 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
     private boolean tryAdd(@NotNull ItemInfo cleanedInfo) {
         if (getTeam().addKnowledge(cleanedInfo, playerUUID.get())) {
             fireChangedEvent();
-            //syncKnowledgeChange(playerUUID, cleanedInfo, true);
             return true;
         }
         return false;
@@ -155,7 +151,6 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
                 getTeam().removeKnowledge(info, playerUUID.get());
                 getTeam().setFullKnowledge(false, playerUUID.get());
                 fireChangedEvent();
-                //sync(playerUUID);
                 return true;
             }
             //Otherwise check if we have any persistent information, and if so try removing that
@@ -169,7 +164,6 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
     private boolean tryRemove(@NotNull ItemInfo cleanedInfo) {
         if (getTeam().removeKnowledge(cleanedInfo, playerUUID.get())) {
             fireChangedEvent();
-            //syncKnowledgeChange(playerUUID, cleanedInfo, false);
             return true;
         }
         return false;
@@ -201,22 +195,20 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
     @Override
     public void setEmc(BigInteger emc) {
         getTeam().setEmc(emc, playerUUID.get());
-        syncEmc(playerUUID.get());
     }
 
     @Override
     public void sync(@NotNull ServerPlayer player) {
-        sync(TeamProjectE.getPlayerUUID(player));
+        if (!getTeam().isSharingEMC() && !getTeam().isSharingKnowledge())
+            sendKnowledgeSync(player);
+        else
+            TeamProjectE.getOnlineTeamMembers(TeamProjectE.getPlayerUUID(player))
+                    .forEach(TeamKnowledgeProvider::sendKnowledgeSync);
     }
 
-    public void sync(UUID uuid) {
-        if (!getTeam().isSharingEMC() && !getTeam().isSharingKnowledge())
-            Optional.ofNullable(ServerLifecycleHooks.getCurrentServer().getPlayerList().getPlayer(uuid))
-                    .ifPresent(p -> PacketHandler.sendTo(new KnowledgeSyncPKT(serializeForClient()), p));
-        else
-            TeamProjectE.getOnlineTeamMembers(uuid)
-                    .forEach(p -> p.getCapability(PECapabilities.KNOWLEDGE_CAPABILITY)
-                            .ifPresent(cap -> PacketHandler.sendTo(new KnowledgeSyncPKT(((TeamKnowledgeProvider) cap).serializeForClient()), p)));
+    private static void sendKnowledgeSync(ServerPlayer player) {
+        player.getCapability(PECapabilities.KNOWLEDGE_CAPABILITY)
+                .ifPresent(cap -> PacketHandler.sendTo(new KnowledgeSyncPKT(((TeamKnowledgeProvider) cap).serializeForClient()), player));
     }
 
     private CompoundTag serializeForClient() {
@@ -235,28 +227,21 @@ public class TeamKnowledgeProvider implements IKnowledgeProvider {
 
     @Override
     public void syncEmc(@NotNull ServerPlayer player) {
-        syncEmc(TeamProjectE.getPlayerUUID(player));
+        sendPacket(new KnowledgeSyncEmcPKT(getEmc()), player, getTeam().isSharingEMC());
     }
 
-    public void syncEmc(UUID uuid) {
-        if (getTeam().isSharingEMC())
-            TeamProjectE.getOnlineTeamMembers(uuid).forEach(p -> PacketHandler.sendTo(new KnowledgeSyncEmcPKT(getEmc()), p));
-        else
-            Optional.ofNullable(ServerLifecycleHooks.getCurrentServer().getPlayerList().getPlayer(uuid))
-                    .ifPresent(p -> PacketHandler.sendTo(new KnowledgeSyncEmcPKT(getEmc()), p));
-    }
 
     @Override
     public void syncKnowledgeChange(@NotNull ServerPlayer player, ItemInfo change, boolean learned) {
-        syncKnowledgeChange(TeamProjectE.getPlayerUUID(player), change, learned);
+        sendPacket(new KnowledgeSyncChangePKT(change, learned), player, getTeam().isSharingKnowledge());
     }
 
-    public void syncKnowledgeChange(UUID uuid, ItemInfo change, boolean learned) {
-        if (getTeam().isSharingKnowledge())
-            TeamProjectE.getOnlineTeamMembers(uuid).forEach(p -> PacketHandler.sendTo(new KnowledgeSyncChangePKT(change, learned), p));
+    private static void sendPacket(IPEPacket packet, ServerPlayer player, boolean team) {
+        if (team)
+            TeamProjectE.getOnlineTeamMembers(TeamProjectE.getPlayerUUID(player))
+                    .forEach(p -> PacketHandler.sendTo(packet, p));
         else
-            Optional.ofNullable(ServerLifecycleHooks.getCurrentServer().getPlayerList().getPlayer(uuid))
-                    .ifPresent(p -> PacketHandler.sendTo(new KnowledgeSyncChangePKT(change, learned), p));
+            PacketHandler.sendTo(packet, player);
     }
 
     @Override
