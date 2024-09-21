@@ -31,7 +31,7 @@ public class KnowledgeEventsProviderMixin {
             index = 0,
             remap = false)
     private static INBTSerializable<CompoundTag> onInit(INBTSerializable<CompoundTag> internal) throws IllegalAccessException {
-        if (Thread.currentThread().getThreadGroup() == SidedThreadGroups.SERVER && internal instanceof KnowledgeImpl.DefaultImpl impl)
+        if (Thread.currentThread().getThreadGroup() == SidedThreadGroups.SERVER && internal instanceof KnowledgeImpl.DefaultImpl impl && PLAYER_FIELD.get(impl) instanceof ServerPlayer)
             return new TeamKnowledgeProvider((ServerPlayer) PLAYER_FIELD.get(impl));
         return internal;
     }
